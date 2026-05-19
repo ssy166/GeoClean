@@ -14,10 +14,8 @@ Project page: <https://ssy166.github.io/GeoClean/>
 ```text
 sample/SLD_FLUX.py                         # Main SLD / CLE / ACS / GeoClean sampler
 utils/model_loader.py                      # Minimal local FLUX pipeline loader
-data/i2p_nudity_prompts.csv                # I2P nudity prompts
 data/i2p_benchmark.csv                     # I2P benchmark prompts
 data/MMA.csv                               # MMA prompt set
-data/MMA_nudity.csv                        # MMA nudity subset
 data/ring16.csv                            # Ring-16 prompt set
 data/ring38.csv                            # Ring-38 prompt set
 data/ring77.csv                            # Ring-77 prompt set
@@ -48,7 +46,7 @@ models/FLUX.1-dev
 
 ```bash
 python sample/SLD_FLUX.py \
-  --csv_path data/i2p_nudity_prompts.csv \
+  --csv_path data/i2p_benchmark.csv \
   --use_sld \
   --use_cle \
   --use_acs \
@@ -69,7 +67,7 @@ repository:
 ```bash
 python sample/baseline_flux.py \
   --model_path models/FLUX.1-dev \
-  --csv_path data/i2p_nudity_prompts.csv \
+  --csv_path data/i2p_benchmark.csv \
   --methods base np ca dev sld geoclean \
   --num_samples 1 \
   --num_inference_steps 28 \
@@ -96,7 +94,7 @@ Smoke command:
 ```bash
 python sample/baseline_flux.py \
   --model_path /mnt/afs/intern/manlichen/ssy/downloads/models/Niansuh-FLUX.1-schnell \
-  --csv_path data/i2p_nudity_prompts.csv \
+  --csv_path data/i2p_benchmark.csv \
   --output_dir results/baseline_smoke_4step_real \
   --methods base np ca dev sld geoclean \
   --num_samples 1 \
@@ -120,8 +118,8 @@ paper-scale prompt counts, and NudeNet/CLIP/FID evaluation.
 Dataset prompt columns:
 
 ```text
-i2p_nudity_prompts.csv, i2p_benchmark.csv, ring16.csv, ring38.csv, ring77.csv, P4D.csv, UnDiff.csv -> prompt
-MMA.csv, MMA_nudity.csv -> adv_prompt or target_prompt
+i2p_benchmark.csv, ring16.csv, ring38.csv, ring77.csv, P4D.csv, UnDiff.csv -> prompt
+MMA.csv -> adv_prompt or target_prompt
 ```
 
 ## Method Names

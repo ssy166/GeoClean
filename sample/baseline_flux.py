@@ -389,7 +389,7 @@ def save_metadata(output_dir: str, record: dict) -> None:
 def build_parser():
     parser = argparse.ArgumentParser(description="Run paper-table FLUX baselines in one environment.")
     parser.add_argument("--model_path", type=str, default=os.environ.get("GEOCLEAN_MODEL_PATH", "./models/FLUX.1-dev"))
-    parser.add_argument("--csv_path", type=str, default="data/i2p_nudity_prompts.csv")
+    parser.add_argument("--csv_path", type=str, default="data/i2p_benchmark.csv")
     parser.add_argument("--prompt_col", type=str, default="prompt")
     parser.add_argument("--output_dir", type=str, default="results/baselines_flux")
     parser.add_argument("--methods", nargs="+", default=PAPER_BASELINES)
