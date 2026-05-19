@@ -2,7 +2,7 @@
 
 **Training-free concept erasure for rectified-flow text-to-image models.**
 
-GeoClean is the cleaned public release of the verified FLUX main workflow. The
+GeoClean is the cleaned public release of the paper-aligned FLUX main workflow. The
 repository intentionally keeps only the code path used by the paper figures and
 tables: the sampler, the FLUX loader, prompt datasets, the runtime requirement
 file, and the project page.
@@ -61,8 +61,19 @@ path is used in this public main workflow.
 
 ## Run Included Baselines
 
-The baseline runner exposes one CLI entry for each baseline implemented in this
-repository:
+The baseline runner exposes one method flag for each executable inference-time
+baseline included in this repository:
+
+```text
+base      -> unmodified FLUX generation
+np        -> negative-prompt vector guidance
+ca        -> concept-ablation guidance
+dev       -> directional erasure vector guidance
+sld       -> safe latent diffusion guidance adapted to FLUX
+geoclean  -> full CLE + ACS sampler
+```
+
+Run all included baselines on the I2P benchmark:
 
 ```bash
 python sample/baseline_flux.py \
@@ -74,46 +85,35 @@ python sample/baseline_flux.py \
   --concept nudity
 ```
 
-The runner only exposes baselines with actual code in this repository:
-`base`, `np`, `ca`, `dev`, `sld`, and `geoclean`.
-
-## Verified Smoke Results
-
-The public baseline runner was smoke-tested on the SenseTime server with the
-same temporary FLUX runtime environment used during repository cleanup:
-
-```text
-workdir: /mnt/afs/intern/manlichen/ssy/GeoClean_baseline_smoke
-env: /mnt/afs/intern/manlichen/ssy/conda_envs/geoclean_flux_tmp
-model: /mnt/afs/intern/manlichen/ssy/downloads/models/Niansuh-FLUX.1-schnell
-output: results/baseline_smoke_4step_real
-```
-
-Smoke command:
+Run a single baseline by passing one method name:
 
 ```bash
 python sample/baseline_flux.py \
-  --model_path /mnt/afs/intern/manlichen/ssy/downloads/models/Niansuh-FLUX.1-schnell \
+  --model_path models/FLUX.1-dev \
   --csv_path data/i2p_benchmark.csv \
-  --output_dir results/baseline_smoke_4step_real \
-  --methods base np ca dev sld geoclean \
-  --num_samples 1 \
-  --num_inference_steps 4 \
-  --height 512 \
-  --width 512 \
+  --methods geoclean \
+  --num_samples 100 \
+  --num_inference_steps 28 \
   --concept nudity \
-  --guidance_scale 0.0 \
-  --safety_scale 1.5 \
-  --acs_delta 0.2 \
-  --seed 123
+  --output_dir results/baselines_flux
 ```
 
-Result: the 6 executable inference-time baselines completed and produced one
-`512x512` PNG each: `base`, `np`, `ca`, `dev`, `sld`, and `geoclean`.
-`metadata.jsonl` contains one record per method with the prompt, seed, saved
-path, and adapter note. This is a runtime smoke test, not the full paper-table
-metric reproduction. Full metric reproduction still requires FLUX.1-dev,
-paper-scale prompt counts, and NudeNet/CLIP/FID evaluation.
+For MMA, use the adversarial prompt column:
+
+```bash
+python sample/baseline_flux.py \
+  --model_path models/FLUX.1-dev \
+  --csv_path data/MMA.csv \
+  --prompt_col adv_prompt \
+  --methods geoclean \
+  --num_samples 100 \
+  --num_inference_steps 28 \
+  --concept nudity \
+  --output_dir results/baselines_mma
+```
+
+Outputs are written to the selected `--output_dir`. Use `--methods base`, `np`,
+`ca`, `dev`, `sld`, or `geoclean` to reproduce each baseline separately.
 
 Dataset prompt columns:
 
