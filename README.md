@@ -7,7 +7,7 @@ repository intentionally keeps only the code path used by the paper figures and
 tables: the sampler, the FLUX loader, prompt datasets, the runtime requirement
 file, and the project page.
 
-Project page: [docs/index.html](docs/index.html)
+Project page: <https://ssy166.github.io/GeoClean/>
 
 ## Repository Layout
 
