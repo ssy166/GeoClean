@@ -1,0 +1,35 @@
+# --- Model and checkpoint artifacts ---
+*.ckpt
+*.safetensors
+*.pth
+*.bin
+*.onnx
+*.pt
+
+/models/
+/weights/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+ENV/
+
+# --- Logs and generated outputs ---
+logs/
+results/
+output/
+runs/
+*.log
+checkpoint-*/
+
+# --- OS and IDE files ---
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
