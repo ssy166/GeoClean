@@ -68,7 +68,7 @@ baseline included in this repository:
 base      -> unmodified FLUX generation
 np        -> negative-prompt vector guidance
 ca        -> concept-ablation guidance
-dev       -> directional erasure vector guidance
+dve       -> Differential Vector Erasure guidance
 sld       -> safe latent diffusion guidance adapted to FLUX
 geoclean  -> full CLE + ACS sampler
 ```
@@ -79,7 +79,7 @@ Run all included baselines on the I2P benchmark:
 python sample/baseline_flux.py \
   --model_path models/FLUX.1-dev \
   --csv_path data/i2p_benchmark.csv \
-  --methods base np ca dev sld geoclean \
+  --methods base np ca dve sld geoclean \
   --num_samples 1 \
   --num_inference_steps 28 \
   --concept nudity
@@ -113,7 +113,8 @@ python sample/baseline_flux.py \
 ```
 
 Outputs are written to the selected `--output_dir`. Use `--methods base`, `np`,
-`ca`, `dev`, `sld`, or `geoclean` to reproduce each baseline separately.
+`ca`, `dve`, `sld`, or `geoclean` to reproduce each baseline separately.
+The legacy alias `dev` is still accepted and maps to `dve`.
 
 Dataset prompt columns:
 

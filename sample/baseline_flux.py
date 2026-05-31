@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -19,8 +20,10 @@ PAPER_BASELINES = [
     "base",
     "np",
     "ca",
-    "dev",
+    "dve",
     "sld",
+    "cle",
+    "acs",
     "geoclean",
 ]
 
@@ -29,7 +32,7 @@ METHOD_ALIASES = {
     "flux.1-dev": "base",
     "negative_prompt": "np",
     "negative-prompt": "np",
-    "dve": "dev",
+    "dev": "dve",
     "ours": "geoclean",
 }
 
@@ -272,7 +275,7 @@ def run_vector_method(
     negative_text = negative_prompt or concept_text
     anchor_text = anchor_concept or ""
 
-    needs_concept = method in {"np", "ca", "sld", "dev", "geoclean"}
+    needs_concept = method in {"np", "ca", "sld", "dve", "cle", "acs", "geoclean"}
     if needs_concept:
         concept_embeds, concept_pooled, concept_txt_ids = encode_prompts(
             pipe, [concept_text] * batch_size, device
@@ -280,7 +283,7 @@ def run_vector_method(
         uncond_embeds, uncond_pooled, uncond_txt_ids = encode_prompts(pipe, [""] * batch_size, device)
     if method == "np":
         neg_embeds, neg_pooled, neg_txt_ids = encode_prompts(pipe, [negative_text] * batch_size, device)
-    if method == "dev":
+    if method == "dve":
         anchor_embeds, anchor_pooled, anchor_txt_ids = encode_prompts(
             pipe, [anchor_text] * batch_size, device
         )
@@ -318,7 +321,33 @@ def run_vector_method(
                 latents, t, uncond_embeds, uncond_pooled, uncond_txt_ids, is_large_timestep
             )
             v_final = v_pos - safety_scale * (v_concept - v_uncond)
-        elif method == "dev":
+        elif method == "cle" and safety_scale > 0 and current_t > threshold_t:
+            x_anchor = latents + dt * v_pos
+            v_concept_anchor = call_model(
+                x_anchor, prev_t, concept_embeds, concept_pooled, concept_txt_ids, is_large_timestep
+            )
+            v_uncond_anchor = call_model(
+                x_anchor, prev_t, uncond_embeds, uncond_pooled, uncond_txt_ids, is_large_timestep
+            )
+            v_final = v_pos - safety_scale * (v_concept_anchor - v_uncond_anchor)
+        elif method == "acs" and safety_scale > 0 and current_t > threshold_t:
+            v_concept = call_model(
+                latents, t, concept_embeds, concept_pooled, concept_txt_ids, is_large_timestep
+            )
+            v_uncond = call_model(
+                latents, t, uncond_embeds, uncond_pooled, uncond_txt_ids, is_large_timestep
+            )
+            u = safety_scale * (v_concept - v_uncond)
+            if u_bar is None:
+                u_bar = torch.zeros_like(v_pos)
+            delta_u = u - u_bar
+            delta_norm = torch.linalg.vector_norm(delta_u, dim=(1, 2), keepdim=True)
+            pos_norm = torch.linalg.vector_norm(v_pos, dim=(1, 2), keepdim=True)
+            limit = acs_delta * pos_norm
+            clip_factor = torch.minimum(torch.ones_like(limit), limit / (delta_norm + 1e-6))
+            u_bar = u_bar + delta_u * clip_factor
+            v_final = v_pos - u_bar
+        elif method == "dve":
             v_anchor = call_model(
                 latents, t, anchor_embeds, anchor_pooled, anchor_txt_ids, is_large_timestep
             )
@@ -357,8 +386,10 @@ def run_vector_method(
         "base": "reference FLUX generation",
         "np": "classic negative-prompt vector guidance",
         "ca": "training-free concept-ablation vector projection",
-        "dev": "DVE/DEV directional vector erasure adapter",
+        "dve": "Differential Vector Erasure (DVE) directional vector erasure adapter",
         "sld": "standard SLD-style safety-vector guidance",
+        "cle": "CLE lookahead correction without ACS smoothing",
+        "acs": "ACS smoothing on the standard current-step SLD correction",
         "geoclean": "CLE + ACS GeoClean sampler",
     }[method]
     return MethodResult(images=decode_latents(pipe, latents, height, width), adapter_note=note)
@@ -443,8 +474,10 @@ def main():
         "base": run_vector_method,
         "np": run_vector_method,
         "ca": run_vector_method,
-        "dev": run_vector_method,
+        "dve": run_vector_method,
         "sld": run_vector_method,
+        "cle": run_vector_method,
+        "acs": run_vector_method,
         "geoclean": run_vector_method,
     }
 
@@ -455,6 +488,7 @@ def main():
             seed = args.seed + prompt_index if args.seed >= 0 else None
             print(f"\n=== method={method} prompt_index={prompt_index} ===")
             if method in vector_methods:
+                start_time = time.perf_counter()
                 result = run_vector_method(
                     pipe=pipe,
                     prompts=prompt_batch,
@@ -476,6 +510,7 @@ def main():
                     seed=seed,
                     device=args.device,
                 )
+                latency_sec = time.perf_counter() - start_time
             else:
                 raise ValueError(f"Unsupported method '{method}'. Supported: {PAPER_BASELINES}")
 
@@ -495,6 +530,7 @@ def main():
                         "seed": seed,
                         "path": save_path,
                         "adapter_note": result.adapter_note,
+                        "latency_sec": latency_sec,
                     },
                 )
 
