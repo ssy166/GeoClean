@@ -199,13 +199,19 @@ def build_call_model_fn(pipe, img_ids, guidance_scale: float, device: str):
         t_input = t_val.expand(latents_in.shape[0])
         if is_large_timestep:
             t_input = t_input / 1000.0
+        model_img_ids = img_ids
+        if model_img_ids.dim() == 3 and model_img_ids.shape[0] != latents_in.shape[0]:
+            if latents_in.shape[0] % model_img_ids.shape[0] == 0:
+                model_img_ids = model_img_ids.repeat(latents_in.shape[0] // model_img_ids.shape[0], 1, 1)
+            else:
+                model_img_ids = model_img_ids[:1].expand(latents_in.shape[0], -1, -1)
 
         kwargs = dict(
             hidden_states=latents_in,
             timestep=t_input,
             encoder_hidden_states=prompt_embs,
             pooled_projections=pooled_embs,
-            img_ids=img_ids,
+            img_ids=model_img_ids,
             txt_ids=txt_ids_in,
             return_dict=False,
         )
@@ -222,6 +228,39 @@ def tensor_project(source, basis):
     numerator = (source.float() * basis.float()).sum(dim=(1, 2), keepdim=True)
     denominator = (basis.float() * basis.float()).sum(dim=(1, 2), keepdim=True).clamp_min(1e-8)
     return (numerator / denominator).to(source.dtype) * basis
+
+
+def cat_condition_ids(first, second):
+    if first.dim() == 2:
+        return first
+    return torch.cat([first, second], dim=0)
+
+
+def paired_model_call(
+    call_model,
+    latents_in,
+    t_val,
+    first_embeds,
+    first_pooled,
+    first_txt_ids,
+    second_embeds,
+    second_pooled,
+    second_txt_ids,
+    is_large_timestep,
+):
+    paired_latents = torch.cat([latents_in, latents_in], dim=0)
+    paired_embeds = torch.cat([first_embeds, second_embeds], dim=0)
+    paired_pooled = torch.cat([first_pooled, second_pooled], dim=0)
+    paired_txt_ids = cat_condition_ids(first_txt_ids, second_txt_ids)
+    paired_output = call_model(
+        paired_latents,
+        t_val,
+        paired_embeds,
+        paired_pooled,
+        paired_txt_ids,
+        is_large_timestep,
+    )
+    return paired_output.chunk(2, dim=0)
 
 
 @torch.no_grad()
@@ -304,38 +343,62 @@ def run_vector_method(
             v_neg = call_model(latents, t, neg_embeds, neg_pooled, neg_txt_ids, is_large_timestep)
             v_final = v_neg + neg_cfg_scale * (v_pos - v_neg)
         elif method == "ca":
-            v_concept = call_model(
-                latents, t, concept_embeds, concept_pooled, concept_txt_ids, is_large_timestep
-            )
-            v_uncond = call_model(
-                latents, t, uncond_embeds, uncond_pooled, uncond_txt_ids, is_large_timestep
+            v_concept, v_uncond = paired_model_call(
+                call_model,
+                latents,
+                t,
+                concept_embeds,
+                concept_pooled,
+                concept_txt_ids,
+                uncond_embeds,
+                uncond_pooled,
+                uncond_txt_ids,
+                is_large_timestep,
             )
             concept_basis = v_concept - v_uncond
             prompt_direction = v_pos - v_uncond
             v_final = v_pos - ca_scale * tensor_project(prompt_direction, concept_basis)
         elif method == "sld" and safety_scale > 0 and current_t > threshold_t:
-            v_concept = call_model(
-                latents, t, concept_embeds, concept_pooled, concept_txt_ids, is_large_timestep
-            )
-            v_uncond = call_model(
-                latents, t, uncond_embeds, uncond_pooled, uncond_txt_ids, is_large_timestep
+            v_concept, v_uncond = paired_model_call(
+                call_model,
+                latents,
+                t,
+                concept_embeds,
+                concept_pooled,
+                concept_txt_ids,
+                uncond_embeds,
+                uncond_pooled,
+                uncond_txt_ids,
+                is_large_timestep,
             )
             v_final = v_pos - safety_scale * (v_concept - v_uncond)
         elif method == "cle" and safety_scale > 0 and current_t > threshold_t:
             x_anchor = latents + dt * v_pos
-            v_concept_anchor = call_model(
-                x_anchor, prev_t, concept_embeds, concept_pooled, concept_txt_ids, is_large_timestep
-            )
-            v_uncond_anchor = call_model(
-                x_anchor, prev_t, uncond_embeds, uncond_pooled, uncond_txt_ids, is_large_timestep
+            v_concept_anchor, v_uncond_anchor = paired_model_call(
+                call_model,
+                x_anchor,
+                prev_t,
+                concept_embeds,
+                concept_pooled,
+                concept_txt_ids,
+                uncond_embeds,
+                uncond_pooled,
+                uncond_txt_ids,
+                is_large_timestep,
             )
             v_final = v_pos - safety_scale * (v_concept_anchor - v_uncond_anchor)
         elif method == "acs" and safety_scale > 0 and current_t > threshold_t:
-            v_concept = call_model(
-                latents, t, concept_embeds, concept_pooled, concept_txt_ids, is_large_timestep
-            )
-            v_uncond = call_model(
-                latents, t, uncond_embeds, uncond_pooled, uncond_txt_ids, is_large_timestep
+            v_concept, v_uncond = paired_model_call(
+                call_model,
+                latents,
+                t,
+                concept_embeds,
+                concept_pooled,
+                concept_txt_ids,
+                uncond_embeds,
+                uncond_pooled,
+                uncond_txt_ids,
+                is_large_timestep,
             )
             u = safety_scale * (v_concept - v_uncond)
             if u_bar is None:
@@ -348,11 +411,17 @@ def run_vector_method(
             u_bar = u_bar + delta_u * clip_factor
             v_final = v_pos - u_bar
         elif method == "dve":
-            v_anchor = call_model(
-                latents, t, anchor_embeds, anchor_pooled, anchor_txt_ids, is_large_timestep
-            )
-            v_concept = call_model(
-                latents, t, concept_embeds, concept_pooled, concept_txt_ids, is_large_timestep
+            v_anchor, v_concept = paired_model_call(
+                call_model,
+                latents,
+                t,
+                anchor_embeds,
+                anchor_pooled,
+                anchor_txt_ids,
+                concept_embeds,
+                concept_pooled,
+                concept_txt_ids,
+                is_large_timestep,
             )
             delta_v = v_anchor - v_concept
             delta_norm = torch.linalg.vector_norm(delta_v, dim=(1, 2), keepdim=True)
@@ -363,11 +432,17 @@ def run_vector_method(
             v_final = v_pos + correction_mag.to(v_pos.dtype) * delta_unit
         elif method == "geoclean" and safety_scale > 0 and current_t > threshold_t:
             x_anchor = latents + dt * v_pos
-            v_concept_anchor = call_model(
-                x_anchor, prev_t, concept_embeds, concept_pooled, concept_txt_ids, is_large_timestep
-            )
-            v_uncond_anchor = call_model(
-                x_anchor, prev_t, uncond_embeds, uncond_pooled, uncond_txt_ids, is_large_timestep
+            v_concept_anchor, v_uncond_anchor = paired_model_call(
+                call_model,
+                x_anchor,
+                prev_t,
+                concept_embeds,
+                concept_pooled,
+                concept_txt_ids,
+                uncond_embeds,
+                uncond_pooled,
+                uncond_txt_ids,
+                is_large_timestep,
             )
             u = safety_scale * (v_concept_anchor - v_uncond_anchor)
             if u_bar is None:
@@ -529,6 +604,17 @@ def main():
                         "concept": args.concept,
                         "seed": seed,
                         "path": save_path,
+                        "height": args.height,
+                        "width": args.width,
+                        "num_inference_steps": args.num_inference_steps,
+                        "guidance_scale": args.guidance_scale,
+                        "safety_scale": args.safety_scale,
+                        "sld_threshold": args.sld_threshold,
+                        "acs_delta": args.acs_delta,
+                        "neg_cfg_scale": args.neg_cfg_scale,
+                        "ca_scale": args.ca_scale,
+                        "dev_strength": args.dev_strength,
+                        "dev_threshold": args.dev_threshold,
                         "adapter_note": result.adapter_note,
                         "latency_sec": latency_sec,
                     },

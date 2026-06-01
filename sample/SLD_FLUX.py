@@ -221,17 +221,54 @@ def run_sld_flux_inference(
     def call_model(latents_in, t_val, prompt_embs, pooled_embs, txt_ids_in):
         # Align with official FluxPipeline: transformer expects timestep / 1000
         t_input = t_val.expand(latents_in.shape[0]).to(latents_in.dtype) / 1000.0
-        
+        guidance_input = torch.tensor(
+            [guidance_scale], device=device, dtype=prompt_embs.dtype
+        ).expand(latents_in.shape[0])
+        model_img_ids = img_ids
+        if model_img_ids.dim() == 3 and model_img_ids.shape[0] != latents_in.shape[0]:
+            if latents_in.shape[0] % model_img_ids.shape[0] == 0:
+                model_img_ids = model_img_ids.repeat(latents_in.shape[0] // model_img_ids.shape[0], 1, 1)
+            else:
+                model_img_ids = model_img_ids[:1].expand(latents_in.shape[0], -1, -1)
+
         return pipe.transformer(
             hidden_states=latents_in,
             timestep=t_input,
             encoder_hidden_states=prompt_embs,
             pooled_projections=pooled_embs,
-            img_ids=img_ids,
+            img_ids=model_img_ids,
             txt_ids=txt_ids_in,
-            guidance=guidance, # global guidance scale
+            guidance=guidance_input, # global guidance scale
             return_dict=False
         )[0]
+
+    def cat_condition_ids(first, second):
+        if first.dim() == 2:
+            return first
+        return torch.cat([first, second], dim=0)
+
+    def paired_model_call(
+        latents_in,
+        t_val,
+        first_embeds,
+        first_pooled,
+        first_txt_ids,
+        second_embeds,
+        second_pooled,
+        second_txt_ids,
+    ):
+        paired_latents = torch.cat([latents_in, latents_in], dim=0)
+        paired_embeds = torch.cat([first_embeds, second_embeds], dim=0)
+        paired_pooled = torch.cat([first_pooled, second_pooled], dim=0)
+        paired_txt_ids = cat_condition_ids(first_txt_ids, second_txt_ids)
+        paired_output = call_model(
+            paired_latents,
+            t_val,
+            paired_embeds,
+            paired_pooled,
+            paired_txt_ids,
+        )
+        return paired_output.chunk(2, dim=0)
 
     # --- Denoising Loop ---
     if hasattr(pipe.scheduler, "set_begin_index"):
@@ -267,18 +304,34 @@ def run_sld_flux_inference(
                 if use_cle_now:
                     # CLE: evaluate correction at a lookahead anchor.
                     x_anchor = latents + dt * noise_pred_pos
-                    
+
                     # Ensure prev_t is handled correctly for anchor
                     # If prev_t is 0 (end), maybe anchor doesn't make sense? usually fine.
-                    noise_pred_safety_anc = call_model(x_anchor, prev_t, safety_embeds, safety_pooled_embeds, safety_text_ids)
-                    noise_pred_uncond_anc = call_model(x_anchor, prev_t, uncond_embeds, uncond_pooled_embeds, uncond_text_ids)
-                    
+                    noise_pred_safety_anc, noise_pred_uncond_anc = paired_model_call(
+                        x_anchor,
+                        prev_t,
+                        safety_embeds,
+                        safety_pooled_embeds,
+                        safety_text_ids,
+                        uncond_embeds,
+                        uncond_pooled_embeds,
+                        uncond_text_ids,
+                    )
+
                     safety_vec = noise_pred_safety_anc - noise_pred_uncond_anc
                 else:
                     # Standard SLD: Use current t predictions
-                    noise_pred_safety = call_model(latents, t, safety_embeds, safety_pooled_embeds, safety_text_ids)
-                    noise_pred_uncond = call_model(latents, t, uncond_embeds, uncond_pooled_embeds, uncond_text_ids)
-                    
+                    noise_pred_safety, noise_pred_uncond = paired_model_call(
+                        latents,
+                        t,
+                        safety_embeds,
+                        safety_pooled_embeds,
+                        safety_text_ids,
+                        uncond_embeds,
+                        uncond_pooled_embeds,
+                        uncond_text_ids,
+                    )
+
                     safety_vec = noise_pred_safety - noise_pred_uncond
                 
                 # Apply Guidance & Norm Rescaling
